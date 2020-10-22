@@ -45,6 +45,8 @@ public:
     using MarketData::MarketData;
     bool subscribe(const std::vector<Instrument> &instruments) override
     { PYBIND11_OVERLOAD_PURE(bool, MarketData, subscribe, instruments); }
+    bool subscribe_all() override
+    { PYBIND11_OVERLOAD_PURE(bool, MarketData, subscribe_all); }
     bool unsubscribe(const std::vector<Instrument> &instruments) override
     { PYBIND11_OVERLOAD_PURE(bool, MarketData, unsubscribe,instruments); }
     void on_start() override
@@ -77,6 +79,10 @@ public:
     {PYBIND11_OVERLOAD_PURE(void, kwb::Book, on_trading_day, event, daytime); }
     void on_quote(event_ptr event, const Quote &quote) override
     {PYBIND11_OVERLOAD_PURE(void, kwb::Book, on_quote, event, quote); }
+    void on_order_input(event_ptr event, const OrderInput &input) override
+    {PYBIND11_OVERLOAD_PURE(void, kwb::Book, on_order_input, event, input); }
+    void on_order(event_ptr event, const Order &order) override
+    {PYBIND11_OVERLOAD_PURE(void, kwb::Book, on_order, event, order); }
     void on_trade(event_ptr event, const Trade &trade) override
     {PYBIND11_OVERLOAD_PURE(void, kwb::Book, on_trade, event, trade); }
     void on_positions(const std::vector<Position>& positions) override
@@ -202,6 +208,9 @@ public:
     void on_order(strategy::Context_ptr context, const Order &order) override
     {PYBIND11_OVERLOAD(void, strategy::Strategy, on_order, context, order); }
 
+    void on_order_action_error(strategy::Context_ptr context, const OrderActionError &error) override
+    {PYBIND11_OVERLOAD(void, strategy::Strategy, on_order_action_error, context, error); }
+
     void on_trade(strategy::Context_ptr context, const Trade &trade) override
     {PYBIND11_OVERLOAD(void, strategy::Strategy, on_trade, context, trade); }
 
@@ -214,6 +223,12 @@ PYBIND11_MODULE(pywingchun, m)
     m_utils.def("is_valid_price", &kungfu::wingchun::is_valid_price);
     m_utils.def("is_final_status", &kungfu::wingchun::is_final_status);
     m_utils.def("get_instrument_type", &kungfu::wingchun::get_instrument_type);
+    m_utils.def("order_from_input", [](const kungfu::wingchun::msg::data::OrderInput &input)
+    {
+        kungfu::wingchun::msg::data::Order order = {};
+        kungfu::wingchun::msg::data::order_from_input(input, order);
+        return order;
+    });
 
     auto m_constants = m.def_submodule("constants");
 
@@ -568,6 +583,17 @@ PYBIND11_MODULE(pywingchun, m)
             .def("__sizeof__", [](const OrderAction &a) { return sizeof(a); })
             .def("__repr__",[](const OrderAction &a){return to_string(a);});
 
+    py::class_<OrderActionError>(m, "OrderActionError")
+            .def(py::init<>())
+            .def_readwrite("order_id", &OrderActionError::order_id)
+            .def_readwrite("order_action_id", &OrderActionError::order_action_id)
+            .def_readwrite("error_id", &OrderActionError::error_id)
+            .def_property("error_msg", &OrderActionError::get_error_msg, &OrderActionError::set_error_msg)
+            .def_property_readonly("raw_address", [](const OrderActionError &a) { return reinterpret_cast<uintptr_t>(&a);})
+            .def("from_raw_address",[](uintptr_t addr) { return * reinterpret_cast<OrderActionError*>(addr); })
+            .def("__sizeof__", [](const OrderActionError &a) { return sizeof(a); })
+            .def("__repr__",[](const OrderActionError &a){return to_string(a);});
+
     py::class_<Trade>(m, "Trade")
             .def(py::init<>())
             .def_readwrite("trade_id", &Trade::trade_id)
@@ -699,8 +725,11 @@ PYBIND11_MODULE(pywingchun, m)
 
     py::class_<kwb::Book, PyBook, kwb::Book_ptr>(m, "Book")
             .def(py::init())
+            .def_property_readonly("ready", &kwb::Book::is_ready)
             .def("on_trading_day", &kwb::Book::on_trading_day)
             .def("on_quote", &kwb::Book::on_quote)
+            .def("on_order_input", &kwb::Book::on_order_input)
+            .def("on_order", &kwb::Book::on_order)
             .def("on_trade", &kwb::Book::on_trade)
             .def("on_positions", &kwb::Book::on_positions)
             .def("on_position_details", &kwb::Book::on_position_details)
@@ -717,6 +746,7 @@ PYBIND11_MODULE(pywingchun, m)
             .def(py::init<bool, data::locator_ptr, const std::string&>())
             .def_property_readonly("io_device", &MarketData::get_io_device)
             .def("subscribe", &MarketData::subscribe)
+            .def("subscribe_all", &MarketData::subscribe_all)
             .def("unsubscribe", &MarketData::unsubscribe)
             .def("on_start", &MarketData::on_start)
             .def("add_time_interval", &MarketData::add_time_interval)
@@ -781,6 +811,7 @@ PYBIND11_MODULE(pywingchun, m)
             .def("list_accounts", &strategy::Context::list_accounts)
             .def("get_account_cash_limit", &strategy::Context::get_account_cash_limit)
             .def("subscribe", &strategy::Context::subscribe)
+            .def("subscribe_all", &strategy::Context::subscribe_all)
             .def("insert_order", &strategy::Context::insert_order, py::arg("symbol"), py::arg("exchange"), py::arg("account"),py::arg("limit_price"),
                     py::arg("volume"), py::arg("type"), py::arg("side"),py::arg("offset") =Offset::Open, py::arg("hedge_flag")= HedgeFlag::Speculation)
             .def("cancel_order", &strategy::Context::cancel_order)

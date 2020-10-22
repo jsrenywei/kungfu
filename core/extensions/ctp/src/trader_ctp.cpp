@@ -182,6 +182,12 @@ namespace kungfu
                 CtpOrder order_record = order_mapper_->get_order_info(action.order_id);
                 if (order_record.internal_order_id == 0)
                 {
+                    auto writer = get_writer(event->source());
+                    msg::data::OrderActionError& error = writer->open_data<msg::data::OrderActionError>(event->gen_time(), msg::type::OrderActionError);
+                    strncpy(error.error_msg, "failed to find order info", ERROR_MSG_LEN);
+                    error.order_id = action.order_id;
+                    error.order_action_id = action.order_action_id;
+                    writer->close_data();
                     SPDLOG_ERROR("failed to find order info for {}", action.order_id);
                     return false;
                 }
@@ -199,9 +205,17 @@ namespace kungfu
                 int error_id = api_->ReqOrderAction(&ctp_action, ++request_id_);
                 if (error_id == 0)
                 {
+                    action_event_map_[request_id_] = action;
+                    SPDLOG_TRACE("success to req cancel order {}, order action id {}, request id {}", action.order_id, action.order_action_id, request_id_);
                     return true;
                 } else
                 {
+                    auto writer = get_writer(event->source());
+                    msg::data::OrderActionError& error = writer->open_data<msg::data::OrderActionError>(event->gen_time(), msg::type::OrderActionError);
+                    error.error_id = error_id;
+                    error.order_id = action.order_id;
+                    error.order_action_id = action.order_action_id;
+                    writer->close_data();
                     SPDLOG_ERROR("failed to cancel order {}, error_id: {}", action.order_id, error_id);
                     return false;
                 }
@@ -308,7 +322,28 @@ namespace kungfu
             {
                 if (pRspInfo != nullptr && pRspInfo->ErrorID != 0)
                 {
-                    SPDLOG_ERROR("ErrorId) {} (ErrorMsg) {} (InputOrderAction) {}", pRspInfo->ErrorID, gbk2utf8(pRspInfo->ErrorMsg), pInputOrderAction == nullptr ? "" : to_string(*pInputOrderAction));
+                    auto it = action_event_map_.find(nRequestID);
+                    if(it != action_event_map_.end())
+                    {
+                        const auto& action = it->second;
+                        uint32_t source = (action.order_action_id >> 32) ^ get_home_uid();
+                        if(has_writer(source))
+                        {
+                            auto writer = get_writer(source);
+                            msg::data::OrderActionError& error = writer->open_data<msg::data::OrderActionError>(0, msg::type::OrderActionError);
+                            error.error_id = pRspInfo->ErrorID;
+                            strncpy(error.error_msg, gbk2utf8(pRspInfo->ErrorMsg).c_str(), ERROR_MSG_LEN);
+                            error.order_id = action.order_id;
+                            error.order_action_id = action.order_action_id;
+                            writer->close_data();
+                        }
+                        else
+                        {
+                            SPDLOG_ERROR("has no writer for [{:08x}]", source);
+                        }
+                    }
+                    SPDLOG_ERROR("ErrorId) {} (ErrorMsg) {} (InputOrderAction) {} (nRequestID) {} (bIsLast) {}", pRspInfo->ErrorID, gbk2utf8(pRspInfo->ErrorMsg),
+                            pInputOrderAction == nullptr ? "" : to_string(*pInputOrderAction), nRequestID, bIsLast);
                 }
             }
 
@@ -347,6 +382,7 @@ namespace kungfu
                     auto writer = get_writer(order_info.source);
                     msg::data::Trade &trade = writer->open_data<msg::data::Trade>(0, msg::type::Trade);
                     from_ctp(*pTrade, trade);
+                    strncpy(trade.trading_day, trading_day_.c_str(), DATE_LEN);
                     uint64_t trade_id = writer->current_frame_uid();
                     trade.trade_id = trade_id;
                     trade.order_id = order_info.internal_order_id;
@@ -373,9 +409,9 @@ namespace kungfu
                     strcpy(account.account_id, get_account_id().c_str());
                     from_ctp(*pTradingAccount, account);
                     account.update_time = kungfu::yijinjing::time::now_in_nano();
+                    account.holder_uid = get_io_device()->get_home()->uid;
                     writer->close_data();
                     std::this_thread::sleep_for(std::chrono::seconds(1));
-//                    req_position_detail();
                     req_position();
                 }
             }
@@ -387,7 +423,7 @@ namespace kungfu
                 {
                     SPDLOG_ERROR("(error_id) {} (error_msg) {}", pRspInfo->ErrorID, gbk2utf8(pRspInfo->ErrorMsg));
                 }
-                else
+                else if(pInvestorPosition != nullptr)
                 {
                     SPDLOG_TRACE(to_string(*pInvestorPosition));
                     auto& position_map = pInvestorPosition->PosiDirection == THOST_FTDC_PD_Long ? long_position_map_ : short_position_map_;
@@ -404,9 +440,12 @@ namespace kungfu
                     }
                     auto& position = position_map[pInvestorPosition->InstrumentID];
                     auto& inst_info = instrument_map_[pInvestorPosition->InstrumentID];
-                    if (strcmp(pInvestorPosition->ExchangeID, EXCHANGE_SHFE) == 0 && pInvestorPosition->YdPosition > 0 && pInvestorPosition->TodayPosition <= 0)
+                    if (strcmp(pInvestorPosition->ExchangeID, EXCHANGE_SHFE) == 0)
                     {
-                        position.yesterday_volume = pInvestorPosition->Position;
+                        if(pInvestorPosition->YdPosition > 0 && pInvestorPosition->TodayPosition <= 0)
+                        {
+                            position.yesterday_volume = pInvestorPosition->Position;
+                        }
                     }
                     else
                     {

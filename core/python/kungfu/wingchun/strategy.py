@@ -61,6 +61,7 @@ class Strategy(pywingchun.Strategy):
         self._on_transaction = getattr(impl, "on_transaction", lambda ctx, transaction: None)
         self._on_order = getattr(impl, 'on_order', lambda ctx, order: None)
         self._on_trade = getattr(impl, 'on_trade', lambda ctx, trade: None)
+        self._on_order_action_error = getattr(impl, 'on_order_action_error', lambda ctx, error: None)
 
     def __init_book(self):
         location = pyyjj.location(pyyjj.mode.LIVE, pyyjj.category.STRATEGY, self.ctx.group, self.ctx.name, self.ctx.locator)
@@ -99,6 +100,7 @@ class Strategy(pywingchun.Strategy):
         self.ctx.add_timer = self.__add_timer
         self.ctx.add_time_interval = self.__add_time_interval
         self.ctx.subscribe = wc_context.subscribe
+        self.ctx.subscribe_all = wc_context.subscribe_all
         self.ctx.add_account = self.__add_account
         self.ctx.list_accounts = wc_context.list_accounts
         self.ctx.get_account_cash_limit = wc_context.get_account_cash_limit
@@ -135,6 +137,10 @@ class Strategy(pywingchun.Strategy):
 
     def on_order(self, wc_context, order):
         self._on_order(self.ctx, order)
+
+
+    def on_order_action_error(self, wc_context, error):
+        self._on_order_action_error(self.ctx, error)
 
     def on_trade(self, wc_context, trade):
         self._on_trade(self.ctx, trade)

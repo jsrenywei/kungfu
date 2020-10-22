@@ -87,12 +87,13 @@ namespace kungfu
                         watch(trigger_time, app_location);
                         request_write_to(trigger_time, app_location->uid);
                         update_broker_state(trigger_time, app_location, BrokerState::Connected);
+                        monitor_instruments(app_location->uid);
                         break;
                     }
                     case category::STRATEGY:
                     {
-                        watch(trigger_time, app_location);
                         request_write_to(trigger_time, app_location->uid);
+                        watch(trigger_time, app_location);
                         break;
                     }
                     default:
@@ -164,22 +165,25 @@ namespace kungfu
                 }
             }
 
-            void Ledger::monitor_instruments()
+            void Ledger::monitor_instruments(uint32_t broker_location)
             {
-                auto insts = events_ | take_while([&](event_ptr event) { return event->msg_type() != msg::type::InstrumentEnd;}) |
-                             is(msg::type::Instrument) |
-                             reduce(std::vector<Instrument>(),
-                                    [](std::vector<Instrument> res, event_ptr event)
-                                    {
-                                        res.push_back(event->data<msg::data::Instrument>());
-                                        return res;
-                                    }) | as_dynamic();
+                auto insts = events_ | from(broker_location) |
+                        take_while([=](event_ptr event) { return event->msg_type() != msg::type::InstrumentEnd;})
+                        | is(msg::type::Instrument) |
+                        reduce(std::vector<Instrument>(),
+                                [](std::vector<Instrument> res, event_ptr event)
+                                {
+                                    res.push_back(event->data<msg::data::Instrument>());
+                                    return res;
+                                }) | as_dynamic();
                 insts.subscribe(
-                        [&](std::vector<Instrument> res)
+                        [=](std::vector<Instrument> res)
                         {
                             if (! this->is_live()) { return;}
+                            SPDLOG_INFO("instrument info updated from {} [{:08x}], size: {}", has_location(broker_location) ? get_location(broker_location)->uname : "unknown",
+                                    broker_location, res.size());
                             this->on_instruments(res);
-                            this->monitor_instruments();
+                            this->monitor_instruments(broker_location);
                         });
             }
 
@@ -198,8 +202,6 @@ namespace kungfu
                 apprentice::on_start();
 
                 pre_start();
-
-                monitor_instruments();
 
                 events_ | is(msg::type::BrokerState) |
                 $([&](event_ptr event)
@@ -344,6 +346,7 @@ namespace kungfu
             {
                 auto app_uid_str = fmt::format("{:08x}", app_location->uid);
                 auto master_cmd_location = location::make(mode::LIVE, category::SYSTEM, "master", app_uid_str, app_location->locator);
+                apprentice::register_location(trigger_time, master_cmd_location);                
                 reader_->join(master_cmd_location, app_location->uid, trigger_time);
                 reader_->join(app_location, 0, trigger_time);
             }

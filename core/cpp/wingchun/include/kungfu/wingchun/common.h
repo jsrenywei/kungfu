@@ -41,7 +41,7 @@ namespace kungfu
         const int EXEC_ID_LEN = 32;
         const int SOURCE_ID_LEN = 16;
         const int BROKER_ID_LEN = 32;
-        const int ERROR_MSG_LEN = 32;
+        const int ERROR_MSG_LEN = 128;
 
         enum class InstrumentType: int8_t
         {
@@ -285,7 +285,7 @@ namespace kungfu
             {
                 case OrderStatus::Submitted:
                 case OrderStatus::Pending:
-                case OrderStatus::PartialFilledNotActive:
+                case OrderStatus::PartialFilledActive:
                 case OrderStatus::Unknown:
                     return false;
                 default:
@@ -372,7 +372,11 @@ namespace kungfu
         {
             if (string_equals(exchange_id, EXCHANGE_SSE))
             {
-                if(startswith(instrument_id, "00"))
+                if (instrument_id.size() == 8)
+                {
+                    return InstrumentType::StockOption;
+                }
+                else if(startswith(instrument_id, "00"))
                 {
                     return InstrumentType::Index;
                 }
@@ -399,7 +403,11 @@ namespace kungfu
             }
             else if(string_equals(exchange_id, EXCHANGE_SZE))
             {
-                if (startswith(instrument_id, "0"))
+                if (instrument_id.size() == 8)
+                {
+                    return InstrumentType::StockOption;
+                }
+                else if (startswith(instrument_id, "0"))
                 {
                     return InstrumentType::Stock;
                 }

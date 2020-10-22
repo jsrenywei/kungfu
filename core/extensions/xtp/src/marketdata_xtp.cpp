@@ -19,6 +19,10 @@ namespace kungfu
             {
                 yijinjing::log::copy_log_settings(get_io_device()->get_home(), SOURCE_XTP);
                 config_ = nlohmann::json::parse(json_config);
+                if(config_.client_id < 1 or config_.client_id > 99)
+                {
+                    throw wingchun_error("client_id must between 1 and 99");
+                }
             }
 
             MarketDataXTP::~MarketDataXTP()
@@ -67,13 +71,6 @@ namespace kungfu
                 std::vector<std::string> sze_tickers;
                 for (const auto &inst: instruments)
                 {
-                    if (strncmp(inst.instrument_id, "*", 1) == 0)
-                    {
-                        res = api_->SubscribeAllMarketData();
-                        res = res && api_->SubscribeAllTickByTick();
-                        SPDLOG_INFO("subscribe all");
-                        return res;
-                    }
                     std::string ticker = inst.instrument_id;
                     if (strcmp(inst.exchange_id, EXCHANGE_SSE) == 0)
                     {
@@ -122,6 +119,13 @@ namespace kungfu
                     SPDLOG_ERROR("failed to subscribe tick by tick");
                 }
                 return level2_rtn == 0 && rtn == 0;
+            }
+
+            bool MarketDataXTP::subscribe_all()
+            {
+                auto res = api_->SubscribeAllMarketData() && api_->SubscribeAllTickByTick();
+                SPDLOG_INFO("subscribe all");
+                return res;
             }
 
             void MarketDataXTP::OnDisconnected(int reason)
